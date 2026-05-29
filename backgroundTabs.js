@@ -27,12 +27,15 @@ chrome.tabs.onMoved.addListener(withAppData(async (appData, tabId, info) => {
   await onTabMoved(appData, tabId, info.windowId)
 }));
 chrome.tabs.onCreated.addListener(withAppData(async (appData, tab) => {
-  appData.tabOpenedAt.set(tab.id, Date.now())
-  // Add background-opened tabs to the map so they're reachable during cycling
-  init(appData, tab.windowId)
-  const tabArr = appData.map.get(tab.windowId)
-  if (tab.id && !tabArr.includes(tab.id)) {
-    tabArr.push(tab.id)
+  if (!tab.active) {
+    // Only track background-opened tabs
+    appData.tabOpenedAt.set(tab.id, Date.now())
+    // Add to the map so they're reachable during cycling
+    init(appData, tab.windowId)
+    const tabArr = appData.map.get(tab.windowId)
+    if (tab.id && !tabArr.includes(tab.id)) {
+      tabArr.push(tab.id)
+    }
   }
 }));
 // chrome.windows.onFocusChanged.addListener(withAppData(async (appData, windowId) => { await onWindowChanged(appData, windowId) }));
@@ -101,6 +104,7 @@ async function getCurrent() {
 async function onTabChanged(appData, tabId, windowId) {
   // console.log("onTabChanged 1")
 
+  appData.tabOpenedAt.delete(tabId) // tab is now in foreground, remove from background tracking
   mapAdd(appData, windowId, tabId) // add new tab to top of stack
   setPosition(appData, windowId, 0)
 
