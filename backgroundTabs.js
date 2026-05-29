@@ -26,6 +26,15 @@ chrome.tabs.onRemoved.addListener(withAppData(async (appData, tabId, info) => {
 chrome.tabs.onMoved.addListener(withAppData(async (appData, tabId, info) => {
   await onTabMoved(appData, tabId, info.windowId)
 }));
+chrome.tabs.onCreated.addListener(withAppData(async (appData, tab) => {
+  appData.tabOpenedAt.set(tab.id, Date.now())
+  // Add background-opened tabs to the map so they're reachable during cycling
+  init(appData, tab.windowId)
+  const tabArr = appData.map.get(tab.windowId)
+  if (tab.id && !tabArr.includes(tab.id)) {
+    tabArr.push(tab.id)
+  }
+}));
 // chrome.windows.onFocusChanged.addListener(withAppData(async (appData, windowId) => { await onWindowChanged(appData, windowId) }));
 
 
@@ -54,6 +63,7 @@ async function getAppData() {
   appData.positions = result.positions ? new Map(JSON.parse(result.positions)) : new Map()
   appData.changedWithHotKey = result.changedWithHotKey || false;
   appData.lastWindowId = result.lastWindowId || -1
+  appData.tabOpenedAt = result.tabOpenedAt ? new Map(JSON.parse(result.tabOpenedAt)) : new Map()
 
   // console.log("load", appData)
 
@@ -65,7 +75,8 @@ async function saveAppData(appData) {
     map: JSON.stringify(Array.from(appData.map.entries())),
     positions: JSON.stringify(Array.from(appData.positions.entries())),
     changedWithHotKey: appData.changedWithHotKey,
-    lastWindowId: appData.lastWindowId
+    lastWindowId: appData.lastWindowId,
+    tabOpenedAt: JSON.stringify(Array.from(appData.tabOpenedAt.entries()))
   });
 
   // console.log("Save")
@@ -101,6 +112,7 @@ async function onTabChanged(appData, tabId, windowId) {
 async function onTabRemoved(appData, _tabId, _windowId) {
   // console.log("onTabRemoved 1 --")
 
+  appData.tabOpenedAt.delete(_tabId)
   prune(appData, _windowId, _tabId)
 
   var { id, windowId } = await getCurrent()
@@ -123,6 +135,32 @@ async function onTabCommandAction(appData, direction) {
 
   var { id, windowId } = await getCurrent()
 
+  if (direction === -1 && appData.map.has(windowId)) {
+    const RECENT_THRESHOLD = 15000
+    const now = Date.now()
+    const tabArray = appData.map.get(windowId)
+    let recentTabId = null
+    let recentTime = 0
+    for (const tid of tabArray) {
+      if (tid === id) continue
+      const openedAt = appData.tabOpenedAt.get(tid)
+      if (openedAt && (now - openedAt) <= RECENT_THRESHOLD && openedAt > recentTime) {
+        recentTime = openedAt
+        recentTabId = tid
+      }
+    }
+    if (recentTabId !== null) {
+      const recentPos = tabArray.indexOf(recentTabId)
+      setPosition(appData, windowId, recentPos)
+      try {
+        await chrome.tabs.update(recentTabId, { active: true })
+      } catch (error) {
+        prune(appData, windowId, recentTabId)
+        await onTabCommandAction(appData, direction)
+      }
+      return
+    }
+  }
 
   if (appData.map.has(windowId) && appData.map.get(windowId).length > 0) {
     newPosition = getNextPosition(appData, windowId, direction)
